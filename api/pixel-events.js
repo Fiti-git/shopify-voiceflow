@@ -1,4 +1,4 @@
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+import fetch from 'node-fetch';
 
 async function getRecommendations(productId, category) {
   try {
