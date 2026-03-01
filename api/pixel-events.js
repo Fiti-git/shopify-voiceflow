@@ -1,39 +1,70 @@
 import fetch from 'node-fetch';
 
 async function getRecommendations(productId, category) {
+  let debugInfo = { productId, category, step1: null, step2: null };
+
+  // Step 1 — Shopify recommendations
   try {
-    const res = await fetch(
-      `https://${process.env.SHOPIFY_STORE}/recommendations/products.json?product_id=${productId}&limit=3`
-    );
+    const url = `https://${process.env.SHOPIFY_STORE}/recommendations/products.json?product_id=${productId}&limit=3`;
+    const res = await fetch(url);
     const data = await res.json();
+    debugInfo.step1 = { status: res.status, productCount: data.products?.length, url };
     if (data.products && data.products.length) {
-      return data.products.map(p => ({
+      return { products: data.products.map(p => ({
         title: p.title,
         url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
         price: p.variants[0] ? p.variants[0].price : '0.00'
-      }));
+      })), debug: debugInfo };
     }
-  } catch (e) {}
-
-  try {
-    const res = await fetch(
-      `https://${process.env.SHOPIFY_STORE}/admin/api/2026-01/products.json?product_type=${encodeURIComponent(category)}&limit=3`,
-      { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN } }
-    );
-    const data = await res.json();
-    return (data.products || []).map(p => ({
-      title: p.title,
-      url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
-      price: p.variants[0] ? p.variants[0].price : '0.00'
-    }));
   } catch (e) {
-    return [];
+    debugInfo.step1 = { error: e.message };
   }
+
+  // Step 2 — Admin API fallback by category
+  try {
+    const url = `https://${process.env.SHOPIFY_STORE}/admin/api/2026-01/products.json?product_type=${encodeURIComponent(category)}&limit=3&status=active`;
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN }
+    });
+    const data = await res.json();
+    debugInfo.step2 = { status: res.status, productCount: data.products?.length, category, url };
+
+    if (data.products && data.products.length) {
+      return { products: data.products.map(p => ({
+        title: p.title,
+        url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
+        price: p.variants[0] ? p.variants[0].price : '0.00'
+      })), debug: debugInfo };
+    }
+  } catch (e) {
+    debugInfo.step2 = { error: e.message };
+  }
+
+  // Step 3 — Last resort: just get any 3 products
+  try {
+    const url = `https://${process.env.SHOPIFY_STORE}/admin/api/2026-01/products.json?limit=3&status=active`;
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN }
+    });
+    const data = await res.json();
+    debugInfo.step3 = { status: res.status, productCount: data.products?.length };
+
+    if (data.products && data.products.length) {
+      return { products: data.products.map(p => ({
+        title: p.title,
+        url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
+        price: p.variants[0] ? p.variants[0].price : '0.00'
+      })), debug: debugInfo };
+    }
+  } catch (e) {
+    debugInfo.step3 = { error: e.message };
+  }
+
+  return { products: [], debug: debugInfo };
 }
 
 async function triggerVoiceflow(userId, message, recs) {
   const r = recs || [];
-
   const variables = {
     message: message,
     rec1_title: r[0] ? r[0].title : 'No recommendation',
@@ -47,7 +78,6 @@ async function triggerVoiceflow(userId, message, recs) {
     rec3_url:   r[2] ? r[2].url : '#'
   };
 
-  // Step 1 — Set variables
   const varRes = await fetch(
     `https://general-runtime.voiceflow.com/state/user/${encodeURIComponent(userId)}/variables`,
     {
@@ -59,13 +89,7 @@ async function triggerVoiceflow(userId, message, recs) {
       body: JSON.stringify(variables)
     }
   );
-  const varBody = await varRes.text();
-  console.log('=== VARIABLES SET ===');
-  console.log('Status:', varRes.status);
-  console.log('Body:', varBody);
-  console.log('Variables sent:', JSON.stringify(variables, null, 2));
 
-  // Step 2 — Launch flow
   const launchRes = await fetch(
     `https://general-runtime.voiceflow.com/state/user/${encodeURIComponent(userId)}/interact`,
     {
@@ -77,16 +101,11 @@ async function triggerVoiceflow(userId, message, recs) {
       body: JSON.stringify({ action: { type: 'launch' } })
     }
   );
-  const launchBody = await launchRes.text();
-  console.log('=== LAUNCH RESPONSE ===');
-  console.log('Status:', launchRes.status);
-  console.log('Body:', launchBody);
 
   return {
     variables,
     varStatus: varRes.status,
-    launchStatus: launchRes.status,
-    launchBody: launchBody
+    launchStatus: launchRes.status
   };
 }
 
@@ -98,53 +117,43 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
-  console.log('=== INCOMING REQUEST ===');
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
   const { type, clientId, productId, productTitle, category, productIds, categories } = req.body;
   let message = '';
-  let recs = [];
+  let recResult = { products: [], debug: {} };
 
   switch (type) {
     case 'product_viewed_repeat':
-      recs = await getRecommendations(productId, category);
+      recResult = await getRecommendations(productId, category);
       message = 'Still loving "' + productTitle + '"? Customers who viewed this also liked these!';
       break;
     case 'browsed_multiple_products':
-      recs = await getRecommendations(productIds[0], categories[0]);
+      recResult = await getRecommendations(productIds[0], categories[0]);
       message = 'Based on your browsing, we think you will love these picks!';
       break;
     case 'category_interest':
-      recs = await getRecommendations(productId, category);
+      recResult = await getRecommendations(productId, category);
       message = 'You seem to love ' + category + '! Here are our top picks';
       break;
     case 'idle_on_product':
-      recs = await getRecommendations(productId, category);
+      recResult = await getRecommendations(productId, category);
       message = 'Need help deciding? Here is what others paired with "' + productTitle + '"';
       break;
     case 'cart_abandoned':
-      recs = await getRecommendations(productId, category);
+      recResult = await getRecommendations(productId, category);
       message = 'Still thinking about "' + productTitle + '"? People also grabbed these!';
       break;
     default:
-      return res.status(200).json({ error: 'Unknown event type: ' + type });
+      return res.status(200).json({ error: 'Unknown event: ' + type });
   }
 
-  console.log('=== RECOMMENDATIONS ===');
-  console.log('Count:', recs.length);
-  console.log('Data:', JSON.stringify(recs, null, 2));
+  let vfResult = null;
+  if (message) vfResult = await triggerVoiceflow(clientId || 'anonymous', message, recResult.products);
 
-  let debugResult = null;
-  if (message) {
-    debugResult = await triggerVoiceflow(clientId || 'anonymous', message, recs);
-  }
-
-  // Return full debug info
   res.status(200).json({
     success: true,
-    event: type,
-    message: message,
-    recommendations: recs,
-    voiceflow: debugResult
+    message,
+    recommendations: recResult.products,
+    shopifyDebug: recResult.debug,
+    voiceflow: vfResult
   });
 }
