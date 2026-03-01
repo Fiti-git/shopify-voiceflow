@@ -34,8 +34,21 @@ async function getRecommendations(productId, category) {
 async function triggerVoiceflow(userId, message, recs) {
   const r = recs || [];
 
-  // Step 1 — Set variables first
-  const varResponse = await fetch(
+  const variables = {
+    message: message,
+    rec1_title: r[0] ? r[0].title : 'No recommendation',
+    rec1_price: r[0] ? r[0].price : '0.00',
+    rec1_url:   r[0] ? r[0].url : '#',
+    rec2_title: r[1] ? r[1].title : 'No recommendation',
+    rec2_price: r[1] ? r[1].price : '0.00',
+    rec2_url:   r[1] ? r[1].url : '#',
+    rec3_title: r[2] ? r[2].title : 'No recommendation',
+    rec3_price: r[2] ? r[2].price : '0.00',
+    rec3_url:   r[2] ? r[2].url : '#'
+  };
+
+  // Step 1 — Set variables
+  const varRes = await fetch(
     `https://general-runtime.voiceflow.com/state/user/${encodeURIComponent(userId)}/variables`,
     {
       method: 'PATCH',
@@ -43,24 +56,17 @@ async function triggerVoiceflow(userId, message, recs) {
         'Authorization': process.env.VOICEFLOW_API_KEY,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        message: message,
-        rec1_title: r[0] ? r[0].title : 'No recommendation',
-        rec1_price: r[0] ? r[0].price : '0.00',
-        rec1_url:   r[0] ? r[0].url : '#',
-        rec2_title: r[1] ? r[1].title : 'No recommendation',
-        rec2_price: r[1] ? r[1].price : '0.00',
-        rec2_url:   r[1] ? r[1].url : '#',
-        rec3_title: r[2] ? r[2].title : 'No recommendation',
-        rec3_price: r[2] ? r[2].price : '0.00',
-        rec3_url:   r[2] ? r[2].url : '#'
-      })
+      body: JSON.stringify(variables)
     }
   );
-  console.log('Variables set status:', varResponse.status);
+  const varBody = await varRes.text();
+  console.log('=== VARIABLES SET ===');
+  console.log('Status:', varRes.status);
+  console.log('Body:', varBody);
+  console.log('Variables sent:', JSON.stringify(variables, null, 2));
 
-  // Step 2 — Launch the flow
-  const launchResponse = await fetch(
+  // Step 2 — Launch flow
+  const launchRes = await fetch(
     `https://general-runtime.voiceflow.com/state/user/${encodeURIComponent(userId)}/interact`,
     {
       method: 'POST',
@@ -68,13 +74,20 @@ async function triggerVoiceflow(userId, message, recs) {
         'Authorization': process.env.VOICEFLOW_API_KEY,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        action: { type: 'launch' }
-      })
+      body: JSON.stringify({ action: { type: 'launch' } })
     }
   );
-  const result = await launchResponse.text();
-  console.log('Launch status:', launchResponse.status, result);
+  const launchBody = await launchRes.text();
+  console.log('=== LAUNCH RESPONSE ===');
+  console.log('Status:', launchRes.status);
+  console.log('Body:', launchBody);
+
+  return {
+    variables,
+    varStatus: varRes.status,
+    launchStatus: launchRes.status,
+    launchBody: launchBody
+  };
 }
 
 export default async function handler(req, res) {
@@ -84,6 +97,9 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
+
+  console.log('=== INCOMING REQUEST ===');
+  console.log('Body:', JSON.stringify(req.body, null, 2));
 
   const { type, clientId, productId, productTitle, category, productIds, categories } = req.body;
   let message = '';
@@ -111,9 +127,24 @@ export default async function handler(req, res) {
       message = 'Still thinking about "' + productTitle + '"? People also grabbed these!';
       break;
     default:
-      return res.status(200).send('OK');
+      return res.status(200).json({ error: 'Unknown event type: ' + type });
   }
 
-  if (message) await triggerVoiceflow(clientId || 'anonymous', message, recs);
-  res.status(200).send('OK');
+  console.log('=== RECOMMENDATIONS ===');
+  console.log('Count:', recs.length);
+  console.log('Data:', JSON.stringify(recs, null, 2));
+
+  let debugResult = null;
+  if (message) {
+    debugResult = await triggerVoiceflow(clientId || 'anonymous', message, recs);
+  }
+
+  // Return full debug info
+  res.status(200).json({
+    success: true,
+    event: type,
+    message: message,
+    recommendations: recs,
+    voiceflow: debugResult
+  });
 }
