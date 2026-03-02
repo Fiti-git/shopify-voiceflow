@@ -75,16 +75,8 @@ export default async function handler(req, res) {
 
   // Return payload for the widget to use directly
   res.status(200).json({
-    trigger: true,
-    message,
-    rec1_title: r[0] ? r[0].title : '',
-    rec1_price: r[0] ? r[0].price : '',
-    rec1_url:   r[0] ? r[0].url : '#',
-    rec2_title: r[1] ? r[1].title : '',
-    rec2_price: r[1] ? r[1].price : '',
-    rec2_url:   r[1] ? r[1].url : '#',
-    rec3_title: r[2] ? r[2].title : '',
-    rec3_price: r[2] ? r[2].price : '',
-    rec3_url:   r[2] ? r[2].url : '#'
-  });
+  trigger: true,
+  message,
+  recommendations: r.slice(0, 3)
+});
 }
