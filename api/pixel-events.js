@@ -12,7 +12,8 @@ async function getRecommendations(productId, category) {
       return data.products.map(p => ({
         title: p.title,
         url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
-        price: p.variants[0] ? p.variants[0].price : '0.00'
+        price: p.variants[0] ? p.variants[0].price : '0.00',
+        image: p.images[0] ? p.images[0].src : null
       }));
     }
   } catch (e) {}
@@ -27,7 +28,8 @@ async function getRecommendations(productId, category) {
     return (data.products || []).map(p => ({
       title: p.title,
       url: `https://${process.env.SHOPIFY_STORE}/products/${p.handle}`,
-      price: p.variants[0] ? p.variants[0].price : '0.00'
+      price: p.variants[0] ? p.variants[0].price : '0.00',
+      image: p.images[0] ? p.images[0].src : null
     }));
   } catch (e) {
     return [];
