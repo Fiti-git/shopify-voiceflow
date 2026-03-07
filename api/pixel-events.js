@@ -1,4 +1,12 @@
-import fetch from 'node-fetch';
+// ─────────────────────────────────────────
+// CORS helper — must run on EVERY response
+// ─────────────────────────────────────────
+function setCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400'); // cache preflight 24h
+}
 
 // ─────────────────────────────────────────
 // Build friendly sales pitch — text only
@@ -19,16 +27,23 @@ function buildSalesPitch(productTitle) {
 // Main Vercel handler
 // ─────────────────────────────────────────
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).send('Method not allowed');
+
+  // ✅ CORS headers on every single response — including errors
+  setCors(res);
+
+  // ✅ Handle preflight OPTIONS request first — before anything else
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Preflight OPTIONS request handled');
+    return res.status(204).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   console.log('📥 Incoming request body:', JSON.stringify(req.body, null, 2));
 
-  const { type, productTitle } = req.body;
+  const { type, productTitle } = req.body || {};
 
   // Only handle idle trigger
   if (type !== 'idle_on_product') {
@@ -46,7 +61,6 @@ export default async function handler(req, res) {
 
   console.log('✅ Product:', productTitle);
   console.log('💬 Message:', message);
-  console.log('📤 Sending response:', JSON.stringify({ trigger: true, message }, null, 2));
 
   return res.status(200).json({
     trigger: true,
