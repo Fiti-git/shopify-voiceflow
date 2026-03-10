@@ -11,9 +11,9 @@
   //  CONFIG — update these values
   // ─────────────────────────────────────────────
   const CONFIG = {
-    apiEndpoint: 'https://YOUR_VERCEL_API/api/behavior',   // your Next.js handler
-    voiceflowProjectID: 'YOUR_VF_PROJECT_ID',              // from Voiceflow dashboard
-    voiceflowApiKey: 'YOUR_VF_API_KEY',                    // from Voiceflow dashboard
+    apiEndpoint: 'https://YOUR_VERCEL_API/behavior',        // your Vercel deployment URL
+    voiceflowProjectID: '69a118cfd0b4c20d9516d7a4',
+    voiceflowApiKey: 'VF.DM.69a1201da5872101725f453a.BZUb2G1hNR8iN9Ea',
     idleThreshold: 8000,          // ms before "idle on product" fires
     cartAbandonThreshold: 120000, // ms — 2 mins idle with items in cart
     sessionKey: 'vf_session_id',

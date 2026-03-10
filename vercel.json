@@ -8,6 +8,7 @@
   ],
   "routes": [
     { "src": "/pixel-events", "dest": "/api/pixel-events.js" },
+    { "src": "/behavior", "dest": "/api/behavior.js" },
     { "src": "/", "dest": "/api/index.js" }
   ]
 }
