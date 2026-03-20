@@ -1,27 +1,29 @@
-/**
- * ============================================================
- *  SHOPIFY CUSTOM BEHAVIOR TRACKER → VOICEFLOW INTEGRATION
- *  Drop this into Shopify Admin > Themes > Edit Code > theme.liquid
- *  Place just before </body>
- * ============================================================
- */
-
 (function () {
-  // ─────────────────────────────────────────────
-  //  CONFIG — update these values
-  // ─────────────────────────────────────────────
   const CONFIG = {
-    apiEndpoint: 'https://YOUR_VERCEL_API/behavior',        // your Vercel deployment URL
+    apiEndpoint: 'https://shopify-voiceflow.vercel.app/api/behavior',
     voiceflowProjectID: '69a118cfd0b4c20d9516d7a4',
     voiceflowApiKey: 'VF.DM.69a1201da5872101725f453a.BZUb2G1hNR8iN9Ea',
-    idleThreshold: 8000,          // ms before "idle on product" fires
-    cartAbandonThreshold: 120000, // ms — 2 mins idle with items in cart
+    idleThreshold: 8000,
+    cartAbandonThreshold: 120000,
     sessionKey: 'vf_session_id',
-    debug: false,
+    debug: true, // set to false in production
   };
 
   // ─────────────────────────────────────────────
-  //  SESSION — persistent across page loads
+  //  COOLDOWN — prevent same event firing twice
+  // ─────────────────────────────────────────────
+  const firedEvents = new Set();
+
+  function hasFired(key) {
+    return firedEvents.has(key);
+  }
+
+  function markFired(key) {
+    firedEvents.add(key);
+  }
+
+  // ─────────────────────────────────────────────
+  //  SESSION
   // ─────────────────────────────────────────────
   function getSessionId() {
     let id = sessionStorage.getItem(CONFIG.sessionKey);
@@ -40,10 +42,16 @@
   }
 
   // ─────────────────────────────────────────────
-  //  CORE — send event to your API → Voiceflow
+  //  CORE — send event to Vercel API
   // ─────────────────────────────────────────────
   async function sendBehaviorEvent(type, payload = {}) {
-    if (CONFIG.debug) console.log('[VF Tracker]', type, payload);
+    if (hasFired(type)) {
+      if (CONFIG.debug) console.log('[VF Tracker] Already fired:', type);
+      return;
+    }
+    markFired(type);
+
+    if (CONFIG.debug) console.log('[VF Tracker] Sending:', type, payload);
 
     try {
       const res = await fetch(CONFIG.apiEndpoint, {
@@ -53,32 +61,48 @@
       });
 
       const data = await res.json();
+      if (CONFIG.debug) console.log('[VF Tracker] API response:', data);
 
       if (data.trigger && data.message) {
         triggerVoiceflow(data.message, data.action);
       }
     } catch (err) {
-      if (CONFIG.debug) console.error('[VF Tracker] Error:', err);
+      if (CONFIG.debug) console.error('[VF Tracker] API Error:', err);
     }
   }
 
   // ─────────────────────────────────────────────
-  //  VOICEFLOW — open chat & send a message
+  //  VOICEFLOW — safely open chat & send message
   // ─────────────────────────────────────────────
   function triggerVoiceflow(message, action) {
-    if (typeof window.voiceflow === 'undefined') return;
+    if (typeof window.voiceflow === 'undefined') {
+      if (CONFIG.debug) console.warn('[VF Tracker] Voiceflow not loaded yet');
+      return;
+    }
+    if (typeof window.voiceflow.chat === 'undefined') {
+      if (CONFIG.debug) console.warn('[VF Tracker] Voiceflow chat not ready');
+      return;
+    }
 
-    // Open the chat widget
-    window.voiceflow.chat.open();
+    try {
+      // Open the widget
+      window.voiceflow.chat.open();
 
-    // Send the proactive message
-    window.voiceflow.chat.interact({
-      type: 'launch',
-      payload: {
-        message,
-        action: action || null,
-      },
-    });
+      // Use 'text' instead of 'launch' to avoid "Session is stale" error
+      window.voiceflow.chat.interact({
+        type: 'text',
+        payload: {
+          message: message,
+        },
+      });
+
+      if (CONFIG.debug) console.log('[VF Tracker] Voiceflow triggered:', message);
+
+    } catch (err) {
+      if (CONFIG.debug) console.error('[VF Tracker] Voiceflow error:', err);
+      // If anything fails just open the widget silently
+      try { window.voiceflow.chat.open(); } catch(e) {}
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -105,7 +129,7 @@
       document.addEventListener(e, resetTimer, { passive: true })
     );
 
-    resetTimer(); // start immediately
+    resetTimer();
   }
 
   // ─────────────────────────────────────────────
@@ -117,12 +141,9 @@
     document.addEventListener('mouseleave', (e) => {
       if (e.clientY <= 0 && !fired) {
         fired = true;
-        const cartValue = getCartValue();
-        const page = getPageType();
-
         sendBehaviorEvent('exit_intent', {
-          cartValue,
-          page,
+          cartValue: getCartValue(),
+          page: getPageType(),
           productTitle: getCurrentProductTitle(),
         });
       }
@@ -152,11 +173,8 @@
         });
     }
 
-    // Check on load + listen for cart updates
     checkCart();
     document.addEventListener('cart:updated', checkCart);
-
-    // Also intercept add-to-cart forms
     document.querySelectorAll('form[action="/cart/add"]').forEach(form => {
       form.addEventListener('submit', () => setTimeout(checkCart, 1000));
     });
@@ -170,7 +188,6 @@
     if (!product) return;
 
     const count = getVisitCount(product.handle);
-
     if (count >= 2) {
       sendBehaviorEvent('repeated_product_visit', {
         productTitle: product.title,
@@ -228,14 +245,14 @@
             productTitle: product.title,
             switchCount,
           });
-          switchCount = 0; // reset to avoid spam
+          switchCount = 0;
         }
       });
     });
   }
 
   // ─────────────────────────────────────────────
-  //  TRACKER 7 — IMAGE GALLERY SWIPE
+  //  TRACKER 7 — IMAGE GALLERY
   // ─────────────────────────────────────────────
   function trackImageGallery() {
     const product = window.ShopifyAnalytics?.meta?.product;
@@ -265,16 +282,17 @@
   }
 
   // ─────────────────────────────────────────────
-  //  TRACKER 8 — SESSION DURATION MILESTONE
+  //  TRACKER 8 — SESSION DURATION
+  //  Only fires ONE milestone, not all three
   // ─────────────────────────────────────────────
   function trackSessionDuration() {
     const milestones = [60000, 180000, 300000]; // 1m, 3m, 5m
-    let fired = new Set();
+    let sessionFired = false;
 
     milestones.forEach(ms => {
       setTimeout(() => {
-        if (!fired.has(ms)) {
-          fired.add(ms);
+        if (!sessionFired) {
+          sessionFired = true;
           sendBehaviorEvent('session_duration', {
             seconds: ms / 1000,
             page: getPageType(),
@@ -287,6 +305,7 @@
 
   // ─────────────────────────────────────────────
   //  TRACKER 9 — FIRST VISIT
+  //  Returns true if this is genuinely first visit
   // ─────────────────────────────────────────────
   function trackFirstVisit() {
     const key = 'vf_visited';
@@ -296,11 +315,14 @@
         referrer: document.referrer,
         landingPage: window.location.pathname,
       });
+      return true;
     }
+    return false;
   }
 
   // ─────────────────────────────────────────────
   //  TRACKER 10 — RETURNING VISITOR
+  //  Only fires if NOT a first visit
   // ─────────────────────────────────────────────
   function trackReturningVisitor() {
     const key = 'vf_last_visit';
@@ -338,19 +360,24 @@
   }
 
   function getCartValue() {
-    // Read from Shopify's global cart if available
     return window.ShopifyAnalytics?.meta?.page?.cartSubtotal || 0;
   }
 
   // ─────────────────────────────────────────────
-  //  INIT — wire up all trackers based on page
+  //  INIT
   // ─────────────────────────────────────────────
   function init() {
     const page = getPageType();
 
-    // Global trackers (all pages)
-    trackFirstVisit();
-    trackReturningVisitor();
+    if (CONFIG.debug) console.log('[VF Tracker] Init on page:', page);
+
+    // Fire EITHER first_visit OR returning_visitor, never both
+    const isFirstVisit = trackFirstVisit();
+    if (!isFirstVisit) {
+      trackReturningVisitor();
+    }
+
+    // Global trackers
     trackExitIntent();
     trackSessionDuration();
 
@@ -363,13 +390,12 @@
       trackImageGallery();
     }
 
-    // Cart abandonment — all pages except checkout
+    // All pages except checkout
     if (page !== 'checkout') {
       trackCartAbandonment();
     }
   }
 
-  // Wait for DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
