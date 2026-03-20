@@ -133,7 +133,7 @@ function setCORSHeaders(res, req) {
 
 export default function handler(req, res) {
   // Set CORS headers on EVERY request including preflight
-  setCORSHeaders(res, req);
+  setCORSHeaders(res);
 
   // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
